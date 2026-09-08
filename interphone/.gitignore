@@ -1,0 +1,20 @@
+# PlatformIO
+firmware/.pio/
+firmware/secrets.ini
+firmware/wokwi/browser-project/
+# Supabase
+supabase/.branches/
+supabase/.temp/
+supabase/.env
+# Node
+node_modules/
+web/dist/
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+web/.env
+web/.env.local
+tools/make-qr/*.png
+tools/make-qr/*.svg

@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "author": "Interphone project",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 0, "left": 0, "attrs": {} },
+
+    { "type": "wokwi-relay-module", "id": "relay", "top": -60, "left": 280, "attrs": {} },
+    { "type": "wokwi-resistor", "id": "r1", "top": 60, "left": 420, "rotate": 90, "attrs": { "value": "330" } },
+    { "type": "wokwi-led", "id": "led1", "top": 140, "left": 410, "attrs": { "color": "red", "label": "LED1 door/relay" } },
+
+    { "type": "wokwi-resistor", "id": "r2", "top": 250, "left": 250, "attrs": { "value": "330" } },
+    { "type": "wokwi-led", "id": "led2", "top": 220, "left": 350, "attrs": { "color": "red", "label": "LED2 status" } },
+
+    { "type": "wokwi-buzzer", "id": "bz", "top": 320, "left": 300, "attrs": { "volume": "0.3" } },
+
+    { "type": "wokwi-pushbutton", "id": "btn", "top": 380, "left": 120, "attrs": { "color": "green", "label": "Bell / test" } },
+    { "type": "wokwi-resistor", "id": "r3", "top": 330, "left": 40, "rotate": 90, "attrs": { "value": "10000" } }
+  ],
+  "connections": [
+    ["esp:TX0", "$serialMonitor:RX", "", []],
+    ["esp:RX0", "$serialMonitor:TX", "", []],
+
+    ["esp:GND.1", "relay:GND", "black", ["h20", "v-80"]],
+    ["esp:VIN",   "relay:VCC", "red",   ["h30", "v-100"]],
+    ["esp:D13",    "relay:IN",  "orange", ["h40"]],
+
+    ["esp:VIN",  "relay:COM", "red",  ["h30"]],
+    ["relay:NO", "r1:1",      "green", ["v20"]],
+    ["r1:2",     "led1:A",    "green", ["v10"]],
+    ["led1:C",   "esp:GND.1", "black", ["v40", "h-300"]],
+
+    ["esp:D19",  "r2:1",      "blue",  ["h30"]],
+    ["r2:2",    "led2:A",    "blue",  ["h20"]],
+    ["led2:C",  "esp:GND.1", "black", ["v30", "h-250"]],
+
+    ["esp:D18", "bz:2",      "purple", ["h60", "v80"]],
+    ["bz:1",    "esp:GND.1", "black",  ["v30", "h-200"]],
+
+    ["esp:3V3", "r3:1",      "red",    ["v-10", "h-30"]],
+    ["r3:2",    "esp:D21",   "yellow", ["v20", "h60"]],
+    ["btn:1.l", "esp:D21",   "yellow", ["h-20", "v-40"]],
+    ["btn:2.l", "esp:GND.2", "black",  ["h-20", "v30"]]
+  ]
+}

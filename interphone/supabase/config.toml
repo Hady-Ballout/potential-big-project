@@ -1,0 +1,41 @@
+# Minimal Supabase CLI config. `supabase init` would generate a fuller one; this is enough for
+# `supabase start`, `supabase db reset` and `supabase functions serve`.
+project_id = "interphone"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173/app"]
+enable_signup = true
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+[realtime]
+enabled = true
+
+[functions.ring]
+verify_jwt = false
+[functions.device-poll]
+verify_jwt = false
+[functions.respond]
+verify_jwt = true

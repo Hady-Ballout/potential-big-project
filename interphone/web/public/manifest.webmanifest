@@ -1,0 +1,13 @@
+{
+  "name": "Interphone",
+  "short_name": "Interphone",
+  "description": "Door entry for residents: see who is ringing and unlock the door.",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111827",
+  "theme_color": "#1f2937",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

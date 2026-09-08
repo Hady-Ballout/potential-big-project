@@ -1,0 +1,17 @@
+/_to_delete/
+**/node_modules/
+**/.pio/
+**/dist/
+**/.env
+**/.env.*
+!**/.env.example
+**/secrets.ini
+**/secrets.*.ini
+!**/secrets.ini.example
+**/.vscode/
+**/.idea/
+**/.DS_Store
+**/Thumbs.db
+interphone/supabase/.branches/
+interphone/supabase/.temp/
+interphone/firmware/wokwi/browser-project/

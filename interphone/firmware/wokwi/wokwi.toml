@@ -1,0 +1,5 @@
+# Wokwi for VS Code: build with `pio run -e esp32devkit` first, then press F1 -> "Wokwi: Start Simulator".
+[wokwi]
+version = 1
+firmware = "../.pio/build/esp32devkit/firmware.bin"
+elf = "../.pio/build/esp32devkit/firmware.elf"
