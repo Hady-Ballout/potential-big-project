@@ -77,9 +77,12 @@ bool NetClient::pollOnce() {
     http.end();
     return false;
   }
-  JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http.getStream());
+  // Read the complete response through HTTPClient so chunked transfer encoding is decoded
+  // before ArduinoJson sees the payload. Supabase edge responses may be chunked.
+  String response = http.getString();
   http.end();
+  JsonDocument doc;
+  DeserializationError err = deserializeJson(doc, response);
   if (err) { snprintf(last_error_, sizeof(last_error_), "json %s", err.c_str()); return false; }
 
   ack_count_ = 0;  // previous acks delivered

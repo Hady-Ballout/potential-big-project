@@ -1,6 +1,10 @@
 // Tunables and credentials. Anything here can be overridden with -D flags in secrets.ini.
 #pragma once
 
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+
 #ifndef INTERPHONE_VERSION
 #define INTERPHONE_VERSION "0.1.0"   // platformio.ini overrides; this default serves the Wokwi browser build
 #endif
