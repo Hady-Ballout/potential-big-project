@@ -33,13 +33,22 @@ async function request<T>(path: string, init: RequestInit = {}, accessToken?: st
   };
   if (accessToken) headers.authorization = `Bearer ${accessToken}`;
   let res: Response;
+  let text: string;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (init.signal?.aborted) controller.abort();
+  init.signal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(abort, 12_000);
   try {
-    res = await fetch(`${FUNCTIONS_URL}${path}`, { ...init, headers });
+    res = await fetch(`${FUNCTIONS_URL}${path}`, { ...init, headers, signal: controller.signal });
+    text = await res.text();
   } catch (e) {
-    if ((e as Error).name === "AbortError") throw e;
+    if (init.signal?.aborted) throw e;
     throw new ApiError(0, "Network error. Check your connection.");
+  } finally {
+    clearTimeout(timeout);
+    init.signal?.removeEventListener("abort", abort);
   }
-  const text = await res.text();
   let body: unknown = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = null; }
   if (!res.ok) {

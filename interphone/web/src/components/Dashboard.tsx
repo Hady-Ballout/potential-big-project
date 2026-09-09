@@ -1,162 +1,91 @@
-import { useCallback, useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { Link } from "react-router";
 import type { Session } from "@supabase/supabase-js";
-import { supabase, VAPID_PUBLIC_KEY } from "../lib/supabase";
+import { supabase } from "../lib/supabase";
 import { ApiError, respond } from "../lib/api";
-import { enablePush, isPushEnabled, pushSupported } from "../lib/push";
-import { ageLabel, effectiveStatus, isActive, isDeviceOnline, type VisitStatus } from "../lib/visit";
+import { ageLabel, effectiveStatus, isActive, isDeviceOnline, statusLabel } from "../lib/visit";
+import { useApartment, useEntrance } from "../lib/useResidentData";
+import { copy } from "../lib/copy";
+import NotificationSettings from "./NotificationSettings";
+import { Button, ConnectionStatus, Feedback, Icon, Loading, Page, StatePanel } from "./ui";
 
-const REFRESH_MS = 5000;
+type Flash = { tone: "success" | "error" | "warn"; title?: string; text: string };
+export default function Dashboard({ session, visitId }: { session: Session; visitId?: string }) {
+  const { apartment, error, retry } = useApartment(session.user.id);
+  const { snapshot, failures, now, refresh } = useEntrance(apartment, visitId);
+  const [busy, setBusy] = useState<"unlock" | "deny" | null>(null);
+  const [flash, setFlash] = useState<Flash | null>(null);
+  const [completed, setCompleted] = useState<{ id: string; status: "unlocked" | "denied" } | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const lock = useRef(false);
+  const stale = !!snapshot && (failures > 0 || now - snapshot.fetchedAt > 12_000);
+  const online = snapshot && !stale ? isDeviceOnline(snapshot.lastSeen, now) : null;
+  const rawVisit = snapshot?.visit;
+  const status = rawVisit ? rawVisit.id === completed?.id ? completed.status : effectiveStatus(rawVisit, stale ? snapshot!.fetchedAt : now) : null;
+  const activeVisit = rawVisit && status && isActive(status) ? rawVisit : null;
+  const c = copy.resident;
 
-interface Apartment { id: string; label: string; building_id: string; building: { slug: string; name: string } }
-interface ActiveVisit { id: string; status: VisitStatus; visitor_note: string | null; created_at: string }
-type Flash = { kind: "ok" | "error" | "warn"; text: string } | null;
-
-export default function Dashboard({ session }: { session: Session }) {
-  const [apartment, setApartment] = useState<Apartment | null | undefined>(undefined);
-  const [lastSeen, setLastSeen] = useState<string | null>(null);
-  const [visit, setVisit] = useState<ActiveVisit | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [flash, setFlash] = useState<Flash>(null);
-  const [pushState, setPushState] = useState<"hidden" | "off" | "on">("hidden");
-  const [, setTick] = useState(0); // re-render for age labels
-
-  // Which apartment does this resident belong to? (RLS: only own membership rows are visible.)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data, error } = await supabase
-        .from("apartment_members")
-        .select("apartment_id, apartments(id, label, building_id, buildings(slug, name))")
-        .limit(1)
-        .maybeSingle();
-      if (cancelled) return;
-      if (error || !data?.apartments) { setApartment(null); return; }
-      // supabase-js types nested relations loosely; normalise here.
-      const a = data.apartments as unknown as { id: string; label: string; building_id: string; buildings: { slug: string; name: string } };
-      setApartment({ id: a.id, label: a.label, building_id: a.building_id, building: a.buildings });
-    })();
-    return () => { cancelled = true; };
-  }, [session.user.id]);
-
-  const refresh = useCallback(async () => {
-    if (!apartment) return;
-    const [dev, vis] = await Promise.all([
-      supabase.from("devices").select("last_seen_at").eq("building_id", apartment.building_id)
-        .order("last_seen_at", { ascending: false, nullsFirst: false }).limit(1).maybeSingle(),
-      supabase.from("visits").select("id, status, visitor_note, created_at").eq("apartment_id", apartment.id)
-        .in("status", ["ringing", "answered"]).order("created_at", { ascending: false }).limit(1).maybeSingle(),
-    ]);
-    setLastSeen(dev.data?.last_seen_at ?? null);
-    const v = vis.data as ActiveVisit | null;
-    setVisit(v && isActive(effectiveStatus(v)) ? v : null);
-    setTick((t) => t + 1);
-  }, [apartment]);
-
-  // Poll + realtime.
-  useEffect(() => {
-    if (!apartment) return;
-    void refresh();
-    const id = setInterval(() => void refresh(), REFRESH_MS);
-    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
-    document.addEventListener("visibilitychange", onVisible);
-    const channel = supabase
-      .channel(`visits:${apartment.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "visits", filter: `apartment_id=eq.${apartment.id}` }, () => void refresh())
-      .subscribe();
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisible);
-      void supabase.removeChannel(channel);
-    };
-  }, [apartment, refresh]);
-
-  // Push button state.
-  useEffect(() => {
-    if (!VAPID_PUBLIC_KEY || !pushSupported()) { setPushState("hidden"); return; }
-    void isPushEnabled().then((on) => setPushState(on ? "on" : "off"));
-  }, []);
-
-  async function act(action: "unlock" | "deny", visitId?: string) {
-    if (!apartment) return;
-    setBusy(true);
+  async function act(action: "unlock" | "deny", id?: string) {
+    if (!apartment || lock.current || stale || !snapshot || (action === "unlock" && online !== true)) return;
+    lock.current = true;
+    setBusy(action);
     setFlash(null);
     try {
-      const r = await respond(session.access_token, visitId ? { action, visit_id: visitId } : { action, apartment_id: apartment.id });
-      if (action === "unlock") {
-        if (r.door_online === false) setFlash({ kind: "warn", text: "Unlock sent, but the door controller is offline. It will be dropped after 30 s." });
-        else setFlash({ kind: "ok", text: "Door unlocked" });
-      } else {
-        setFlash({ kind: "ok", text: "Visitor denied" });
-      }
+      const r = await respond(session.access_token, id ? { action, visit_id: id } : { action, apartment_id: apartment.id });
+      if (id) setCompleted({ id, status: action === "deny" ? "denied" : "unlocked" });
+      setFlash(action === "deny" ? { tone: "success", title: c.declined, text: c.declineDetail }
+        : r.door_online === false ? { tone: "warn", title: c.sent, text: c.queuedOffline }
+        : { tone: "success", title: c.sent, text: c.sentDetail });
     } catch (e) {
+      console.error("Resident action failed", e);
       const err = e as ApiError;
-      setFlash({ kind: "error", text: err.status === 409 ? `Too late: ${err.message}` : err.message });
-    } finally {
-      setBusy(false);
-      void refresh();
-    }
+      setFlash({ tone: "error", text: err.status === 409 ? c.conflict : err.status === 401 ? c.sessionExpired
+        : err.status === 403 ? c.denied : err.status === 0 ? c.actionUnknown : c.actionFailed });
+    } finally { lock.current = false; setBusy(null); refresh(); }
   }
-
-  async function onEnablePush() {
-    if (!VAPID_PUBLIC_KEY) return;
-    const r = await enablePush(session.user.id, VAPID_PUBLIC_KEY);
-    if (r.ok) { setPushState("on"); setFlash({ kind: "ok", text: "Notifications enabled on this device" }); }
-    else if (r.reason === "denied") setFlash({ kind: "error", text: "Notifications are blocked in the browser settings." });
-    else setFlash({ kind: "error", text: r.message ?? "Could not enable notifications" });
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try { const { error } = await supabase.auth.signOut(); if (error) throw error; }
+    catch (e) { console.error("Sign-out failed", e); setFlash({ tone: "error", text: c.signOutFailed }); }
+    finally { setSigningOut(false); }
   }
+  const account = <div className="account-row"><div><strong>{c.account}</strong><p className="subtle">{c.accountDetail}</p></div><Button variant="quiet" disabled={signingOut || !!busy} onClick={() => void signOut()}>{copy.signOut}</Button></div>;
+  const feedback = flash && <Feedback tone={flash.tone} title={flash.title}>{flash.text}</Feedback>;
+  const unlock = (id?: string) => <Button className="full-width" variant="primary" disabled={!!busy || online !== true || stale} onClick={() => void act("unlock", id)}><Icon name="door" />{busy === "unlock" ? c.unlocking : c.unlock}</Button>;
 
-  if (apartment === undefined) {
-    return <div className="page"><div className="status"><h2 className="pulse">Loading...</h2></div></div>;
-  }
-  if (apartment === null) {
-    return (
-      <div className="page">
-        <div className="header"><h1>Interphone</h1><button className="btn link" onClick={() => void supabase.auth.signOut()}>Log out</button></div>
-        <div className="card"><p>Your account is not assigned to an apartment yet. Ask the building admin.</p></div>
-      </div>
-    );
-  }
+  if (error || apartment === undefined || apartment === null) return <Page context={c.eyebrow}>
+    {error ? <StatePanel title={c.loadFailed} detail={c.loadDetail}><Button onClick={retry}>{copy.retry}</Button></StatePanel>
+      : apartment === undefined ? <Loading /> : <StatePanel title={c.unassigned} detail={c.unassignedDetail} icon="door" />}
+    {feedback}{account}
+  </Page>;
 
-  const online = isDeviceOnline(lastSeen);
-  return (
-    <div className="page">
-      <div className="header">
-        <div>
-          <h1>Apartment {apartment.label}</h1>
-          <span className="subtle">
-            {apartment.building.name} &middot; <span className={`dot ${online ? "online" : "offline"}`} />
-            {online ? "Door online" : "Door offline"}
-          </span>
-        </div>
-        <button className="btn link" onClick={() => void supabase.auth.signOut()}>Log out</button>
-      </div>
-
-      {visit && (
-        <div className="card">
-          <h2>Visitor at the door</h2>
-          <p style={{ margin: "4px 0 12px" }}>
-            {visit.visitor_note ? <q>{visit.visitor_note}</q> : <span className="subtle">No message</span>}
-            <span className="subtle"> &middot; {ageLabel(visit.created_at)}</span>
-          </p>
-          <div className="row">
-            <button className="btn primary" disabled={busy} onClick={() => void act("unlock", visit.id)}>Unlock</button>
-            <button className="btn danger" disabled={busy} onClick={() => void act("deny", visit.id)}>Deny</button>
-          </div>
-        </div>
-      )}
-
-      {flash && <div className={`flash ${flash.kind === "ok" ? "" : flash.kind}`}>{flash.text}</div>}
-
-      <button className="btn unlock" disabled={busy} onClick={() => void act("unlock")}>
-        {busy ? "..." : "UNLOCK"}
-      </button>
-      <p className="subtle" style={{ textAlign: "center" }}>Opens the building door for a few seconds.</p>
-
-      {pushState !== "hidden" && (
-        <button className="btn" disabled={pushState === "on"} onClick={() => void onEnablePush()}>
-          {pushState === "on" ? "Notifications on" : "Enable notifications"}
-        </button>
-      )}
+  return <Page wide context={c.eyebrow}>
+    <div className="page-heading resident-heading"><div><p className="eyebrow">{c.eyebrow}</p><h1>{c.title}</h1><p className="subtle">{c.detail}</p></div>
+      <div className="home-address"><strong>{copy.apartment(apartment.label)}</strong><p className="subtle">{apartment.building.name}</p></div>
     </div>
-  );
+    <div className="resident-grid"><div className="stack">
+      {feedback}
+      {stale && <Feedback tone="warn">{failures >= 2 ? copy.reconnecting : copy.stale}</Feedback>}
+      {!snapshot ? failures > 0 ? <StatePanel title={c.activityFailed} detail={c.activityDetail}><Button onClick={refresh}>{copy.retry}</Button></StatePanel>
+        : <Loading title={c.activityLoading} detail={c.activityLoadingDetail} />
+        : activeVisit ? <section className="panel incoming-panel" aria-labelledby="incoming-title">
+          <div className="incoming-heading"><div className="state-symbol"><Icon name="bell" /></div><span className="subtle">{ageLabel(activeVisit.created_at, now)}</span></div>
+          <div className="panel-header"><h2 id="incoming-title">{c.incoming}</h2><p className="subtle">{c.incomingDetail}</p></div>
+          <div className="visitor-message">{activeVisit.visitor_note ? <q>{activeVisit.visitor_note}</q> : <p className="subtle">{c.noMessage}</p>}</div>
+          <div className="actions">{unlock(activeVisit.id)}<Button variant="quiet" disabled={!!busy || stale} onClick={() => void act("deny", activeVisit.id)}>{busy === "deny" ? c.declining : c.decline}</Button></div>
+        </section>
+        : visitId ? <StatePanel title={rawVisit ? c.ended : c.unavailable} detail={rawVisit && status ? statusLabel(status, "resident").detail : c.unavailableDetail} icon={status === "unlocked" ? "check" : "clock"}>
+          <Link className="button button-secondary" to="/app">{c.returnHome}</Link>
+        </StatePanel>
+        : <StatePanel title={c.waiting} detail={c.waitingDetail} icon="door">{unlock()}<p className="subtle form-help">{c.unlockHelp}</p></StatePanel>}
+      <span className="sr-only" role="status">{activeVisit ? c.incoming : snapshot ? visitId ? c.ended : c.waiting : c.activityLoading}</span>
+    </div><aside className="stack">
+      <section className="panel side-panel"><h2><Icon name="door" />{copy.entrance}</h2><ConnectionStatus online={online} />
+        <p className="subtle">{online === null ? copy.status.unknownDetail : online ? copy.status.onlineDetail : copy.status.offlineDetail}</p>
+      </section>
+      <NotificationSettings userId={session.user.id} />
+      {account}
+    </aside></div>
+  </Page>;
 }

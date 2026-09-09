@@ -15,3 +15,5 @@
 interphone/supabase/.branches/
 interphone/supabase/.temp/
 interphone/firmware/wokwi/browser-project/
+**/test-results/
+**/playwright-report/

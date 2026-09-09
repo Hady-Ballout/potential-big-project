@@ -1,4 +1,5 @@
-// Pure helpers shared by the visitor page and the resident app. No imports, unit-tested.
+import { copy } from "./copy";
+// Pure helpers shared by the visitor page and the resident app.
 
 export type VisitStatus = "ringing" | "answered" | "unlocked" | "denied" | "expired" | "cancelled";
 
@@ -38,24 +39,11 @@ export function isDeviceOnline(lastSeenAt: string | null | undefined, now: numbe
 }
 
 export function statusLabel(status: VisitStatus, who: "visitor" | "resident"): { title: string; detail: string } {
-  if (who === "visitor") {
-    switch (status) {
-      case "ringing": return { title: "Ringing...", detail: "Waiting for the resident to answer." };
-      case "answered": return { title: "Resident is answering", detail: "Hold on a moment." };
-      case "unlocked": return { title: "Door is open", detail: "Push the door now. It locks again in a few seconds." };
-      case "denied": return { title: "Not let in", detail: "The resident did not open the door." };
-      case "expired": return { title: "Nobody answered", detail: "You can try again or ring another apartment." };
-      case "cancelled": return { title: "Cancelled", detail: "This ring was cancelled." };
-    }
-  }
-  switch (status) {
-    case "ringing": return { title: "Visitor at the door", detail: "Someone is ringing your apartment." };
-    case "answered": return { title: "Visitor at the door", detail: "You are answering this visit." };
-    case "unlocked": return { title: "Door unlocked", detail: "The door was opened." };
-    case "denied": return { title: "Visitor denied", detail: "You did not open the door." };
-    case "expired": return { title: "Missed visitor", detail: "Nobody answered in time." };
-    case "cancelled": return { title: "Cancelled", detail: "The visitor cancelled." };
-  }
+  if (who === "visitor") return copy.outcomes[status];
+  if (status === "unlocked") return { title: copy.resident.sent, detail: copy.resident.sentDetail };
+  if (status === "denied") return { title: copy.resident.declined, detail: copy.resident.declineDetail };
+  if (isActive(status)) return { title: copy.resident.incoming, detail: copy.resident.incomingDetail };
+  return copy.outcomes[status];
 }
 
 /** "just now", "12 s ago", "3 min ago" */

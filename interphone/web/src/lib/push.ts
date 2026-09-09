@@ -51,9 +51,15 @@ export async function enablePush(profileId: string, vapidPublicKey: string): Pro
   }
 }
 
-export async function isPushEnabled(): Promise<boolean> {
+export async function isPushEnabled(profileId: string): Promise<boolean> {
   if (!pushSupported() || Notification.permission !== "granted") return false;
   const reg = await navigator.serviceWorker.getRegistration("/sw.js");
   if (!reg) return false;
-  return (await reg.pushManager.getSubscription()) != null;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return false;
+  // A browser subscription alone may belong to a previously signed-in resident.
+  const { data, error } = await supabase.from("push_subscriptions").select("endpoint")
+    .eq("profile_id", profileId).eq("endpoint", sub.endpoint).maybeSingle();
+  if (error) throw error;
+  return data != null;
 }

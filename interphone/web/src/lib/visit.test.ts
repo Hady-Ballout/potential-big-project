@@ -45,8 +45,9 @@ describe("statusLabel", () => {
       expect(statusLabel(s, "visitor").title.length).toBeGreaterThan(0);
       expect(statusLabel(s, "resident").title.length).toBeGreaterThan(0);
     }
-    expect(statusLabel("unlocked", "visitor").title).toBe("Door is open");
-    expect(statusLabel("expired", "visitor").title).toBe("Nobody answered");
+    expect(statusLabel("unlocked", "visitor").title).toBe("Entry approved");
+    expect(statusLabel("unlocked", "resident").title).toBe("Unlock request sent");
+    expect(statusLabel("expired", "visitor").title).toBe("No response this time");
   });
 });
 

@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:ui": "playwright test",
+    "icons": "node scripts/render-icons.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
@@ -17,6 +19,8 @@
     "react-router": "^7.1.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.63.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

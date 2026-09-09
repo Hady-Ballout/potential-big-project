@@ -4,11 +4,13 @@ Vite + React + TypeScript. One app, two entry points:
 
 | Route | Who | What |
 |---|---|---|
-| `/d/:slug` | visitor (from the QR sticker) | building name, door online dot, apartment grid, optional note, **Ring**, then live status: ringing → door is open / not let in / nobody answered |
-| `/app` | resident | email + password login, apartment label, door online dot, big **UNLOCK** button, a "Visitor at the door" card with Unlock / Deny when someone rings, optional **Enable notifications** (Web Push), log out |
-| `/app/visit/:id` | push notification deep link | redirects to `/app` |
+| `/d/:slug` | visitor (from the QR sticker) | building identity, apartment selection, optional message, ringing progress, and approval / declined / no-response outcomes |
+| `/app` | resident | labeled sign-in, incoming visitor or idle state, remote unlock, explicit connection feedback, notification setup, and sign-out |
+| `/app/visit/:visitId` | push notification deep link | retains the referenced visit through login; shows that visit or explains that it ended / is unavailable |
 
-Kept deliberately minimal. Not built yet: video/audio call, visit history, magic-link login, admin screens, offline caching.
+The interface uses warm light surfaces, restrained green actions, and shared accessible controls. **Entry approved / Unlock request sent** confirms a request, not physical opening. Offline or stale controller information disables resident unlocking; visitors can still ring. Failed refreshes preserve the last successful data with a visible warning.
+
+Not built yet: video/audio call, visit history, magic-link login, admin screens, offline caching. See [UI release checks](../docs/UI_QA.md) for automated coverage and the physical-demo rehearsal.
 
 ## Run locally
 
@@ -25,7 +27,7 @@ npm run dev                     # http://localhost:5173
 Demo logins from `supabase/seed.sql`: `demo@interphone.local` / `demo1234` (apartment 1A),
 `neighbour@interphone.local` / `demo1234` (apartment 2A). Visitor page: http://localhost:5173/d/demo-building
 
-Scripts: `npm run dev`, `npm run build` (typecheck + bundle to `dist/`), `npm run typecheck`, `npm test` (vitest, pure helpers in `src/lib`).
+Scripts: `npm run dev`, `npm run build` (typecheck + bundle to `dist/`), `npm run typecheck`, `npm test` (Vitest helpers), `npm run test:ui` (Chrome interaction, accessibility, and screenshot checks using an isolated simulated backend), `npm run icons` (regenerate PNGs from the SVG app mark).
 
 ## Testing from a phone on the same Wi-Fi
 
@@ -54,7 +56,9 @@ src/main.tsx               React root + router
 src/App.tsx                routes
 src/pages/VisitorPage.tsx  /d/:slug state machine (loading → pick → ringing → done)
 src/pages/ResidentPage.tsx /app session gate → LoginForm | Dashboard
-src/components/            LoginForm, Dashboard
+src/components/            LoginForm, Dashboard, NotificationSettings, shared UI primitives
+src/lib/copy.ts            centralized English interface copy
+src/lib/useResidentData.ts membership lookup, visit-specific reads, polling, stale-data handling
 src/lib/api.ts             typed calls to the ring / respond edge functions
 src/lib/supabase.ts        env + supabase-js client
 src/lib/push.ts            service worker registration + push subscription

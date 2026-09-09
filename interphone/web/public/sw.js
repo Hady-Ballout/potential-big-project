@@ -12,7 +12,7 @@ self.addEventListener("push", (e) => {
       tag: data.tag || "interphone",
       renotify: true,
       requireInteraction: true,
-      icon: "/icon.svg",
+      icon: "/icon-192.png",
       data: { url, visit_id: data.visit_id },
     }),
   );

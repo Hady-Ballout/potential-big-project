@@ -7,8 +7,7 @@ export default function App() {
     <Routes>
       <Route path="/d/:slug" element={<VisitorPage />} />
       <Route path="/app" element={<ResidentPage />} />
-      {/* Push notifications deep-link here (see supabase/functions/ring). The dashboard shows the active visit. */}
-      <Route path="/app/visit/:visitId" element={<Navigate to="/app" replace />} />
+      <Route path="/app/visit/:visitId" element={<ResidentPage />} />
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>
   );
