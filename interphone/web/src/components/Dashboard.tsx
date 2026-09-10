@@ -99,11 +99,14 @@ export default function Dashboard({ session, visitId }: { session: Session; visi
           <div className="panel-header"><h2 id="incoming-title">{c.incoming}</h2><p className="subtle">{c.incomingDetail}</p></div>
           <div className="visitor-message">{activeVisit.visitor_note ? <q>{activeVisit.visitor_note}</q> : <p className="subtle">{c.noMessage}</p>}</div>
           {status === "ringing" && <div className="call-video call-placeholder" role="img" aria-label="Visitor video waiting"><Icon name="info" /><span>Visitor video will appear here after you answer.</span></div>}
-          {status === "ringing" && <Button className="full-width" variant="primary" disabled={!!busy || stale} onClick={() => void answer(activeVisit.id)}>{busy === "answer" ? "Answering…" : "Answer with voice"}</Button>}
+          {status === "ringing" && <Button className="full-width answer-call-button" variant="primary" disabled={!!busy || stale} onClick={() => void answer(activeVisit.id)}>{busy === "answer" ? "Answering…" : "Answer with voice"}</Button>}
           {status === "answered" && activeVisit.answered_by === session.user.id && callStream && <MediaCall accessToken={session.access_token} visitId={activeVisit.id} role="resident" localStream={callStream} onEnded={() => setCallStream(null)} />}
           {status === "answered" && activeVisit.answered_by === session.user.id && !callStream && <Feedback tone="warn">Call media is not active. Entry controls remain available.</Feedback>}
           {status === "answered" && activeVisit.answered_by !== session.user.id && <Feedback>This call was answered by another resident.</Feedback>}
-          <div className="actions">{unlock(activeVisit.id)}<Button variant="quiet" disabled={!!busy || stale} onClick={() => void act("deny", activeVisit.id)}>{busy === "deny" ? c.declining : c.decline}</Button></div>
+          <section className="door-actions" aria-label="Entry controls">
+            <p className="door-actions-label">Entry controls</p>
+            <div className="actions">{unlock(activeVisit.id)}<Button className="decline-button" variant="quiet" disabled={!!busy || stale} onClick={() => void act("deny", activeVisit.id)}>{busy === "deny" ? c.declining : c.decline}</Button></div>
+          </section>
         </section>
         : visitId ? <StatePanel title={rawVisit ? c.ended : c.unavailable} detail={rawVisit && status ? statusLabel(status, "resident").detail : c.unavailableDetail} icon={status === "unlocked" ? "check" : "clock"}>
           <Link className="button button-secondary" to="/app">{c.returnHome}</Link>
