@@ -17,6 +17,7 @@ export default function MediaCall({ accessToken, visitId, role, localStream, onE
     let disposed = false;
     const instance = new WebRtcCall(accessToken, visitId, role, localStream, stream => {
       if (!remoteElement.current) return;
+      if (remoteElement.current.srcObject === stream) return;
       remoteElement.current.srcObject = stream;
       void remoteElement.current.play().then(() => setNeedsPlay(false)).catch(() => setNeedsPlay(true));
     }, (next, turnDegraded) => {

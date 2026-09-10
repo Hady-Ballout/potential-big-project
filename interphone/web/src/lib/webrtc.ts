@@ -64,6 +64,7 @@ export class WebRtcCall {
       try {
         this.makingOffer = true;
         await this.pc!.setLocalDescription();
+        await this.waitForIceGathering();
         await this.send({ description: this.pc!.localDescription! });
       } finally { this.makingOffer = false; }
     };
@@ -98,6 +99,7 @@ export class WebRtcCall {
     try {
       this.makingOffer = true;
       await this.pc.setLocalDescription(await this.pc.createOffer());
+      await this.waitForIceGathering();
       await this.send({ description: this.pc.localDescription! });
     } finally { this.makingOffer = false; }
   }
@@ -114,6 +116,7 @@ export class WebRtcCall {
         for (const candidate of this.pendingCandidates.splice(0)) await pc.addIceCandidate(candidate);
         if (signal.description.type === "offer") {
           await pc.setLocalDescription(await pc.createAnswer());
+          await this.waitForIceGathering();
           await this.send({ description: pc.localDescription! });
         }
       } else if (signal.candidate) {
@@ -126,6 +129,27 @@ export class WebRtcCall {
   private async send(payload: Signal) {
     if (!this.channel) return;
     await this.channel.send({ type: "broadcast", event: "signal", payload });
+  }
+
+  // Broadcast signaling is not a durable queue. Include gathered candidates in
+  // the SDP as well as trickling them so a candidate emitted just before the
+  // other peer subscribes cannot strand the call in "connecting".
+  private async waitForIceGathering() {
+    const pc = this.pc;
+    if (!pc || pc.iceGatheringState === "complete") return;
+    await new Promise<void>(resolve => {
+      let timer = 0;
+      const finish = () => {
+        pc.removeEventListener("icegatheringstatechange", changed);
+        window.clearTimeout(timer);
+        resolve();
+      };
+      const changed = () => {
+        if (pc.iceGatheringState === "complete") finish();
+      };
+      timer = window.setTimeout(finish, 8_000);
+      pc.addEventListener("icegatheringstatechange", changed);
+    });
   }
 
   private connectionChanged() {
