@@ -98,6 +98,7 @@ export default function Dashboard({ session, visitId }: { session: Session; visi
           <div className="incoming-heading"><div className="state-symbol"><Icon name="bell" /></div><span className="subtle">{ageLabel(activeVisit.created_at, now)}</span></div>
           <div className="panel-header"><h2 id="incoming-title">{c.incoming}</h2><p className="subtle">{c.incomingDetail}</p></div>
           <div className="visitor-message">{activeVisit.visitor_note ? <q>{activeVisit.visitor_note}</q> : <p className="subtle">{c.noMessage}</p>}</div>
+          {status === "ringing" && <div className="call-video call-placeholder" role="img" aria-label="Visitor video waiting"><Icon name="info" /><span>Visitor video will appear here after you answer.</span></div>}
           {status === "ringing" && <Button className="full-width" variant="primary" disabled={!!busy || stale} onClick={() => void answer(activeVisit.id)}>{busy === "answer" ? "Answering…" : "Answer with voice"}</Button>}
           {status === "answered" && activeVisit.answered_by === session.user.id && callStream && <MediaCall accessToken={session.access_token} visitId={activeVisit.id} role="resident" localStream={callStream} onEnded={() => setCallStream(null)} />}
           {status === "answered" && activeVisit.answered_by === session.user.id && !callStream && <Feedback tone="warn">Call media is not active. Entry controls remain available.</Feedback>}

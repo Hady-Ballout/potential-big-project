@@ -1,5 +1,5 @@
-import type { RealtimeChannel } from "@supabase/supabase-js";
-import { supabase } from "./supabase";
+import { createClient, type RealtimeChannel, type SupabaseClient } from "@supabase/supabase-js";
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from "./supabase";
 import { getCallConfig } from "./api";
 
 export type CallState = "connecting" | "connected" | "degraded" | "failed" | "ended";
@@ -27,6 +27,7 @@ export async function mediaDevices() {
 export class WebRtcCall {
   private pc: RTCPeerConnection | null = null;
   private channel: RealtimeChannel | null = null;
+  private realtimeClient: SupabaseClient;
   private makingOffer = false;
   private ignoreOffer = false;
   private pendingCandidates: RTCIceCandidateInit[] = [];
@@ -43,7 +44,12 @@ export class WebRtcCall {
     private local: MediaStream,
     private onRemote: (stream: MediaStream) => void,
     private onState: (state: CallState, degraded?: boolean) => void,
-  ) {}
+  ) {
+    // A call owns its Realtime auth so visitor and resident tabs cannot overwrite each other's JWT.
+    this.realtimeClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    });
+  }
 
   async connect() {
     const config = await getCallConfig(this.accessToken, this.visitId);
@@ -62,7 +68,8 @@ export class WebRtcCall {
       } finally { this.makingOffer = false; }
     };
     this.pc.onconnectionstatechange = () => this.connectionChanged();
-    this.channel = supabase.channel(config.topic, { config: { private: true, broadcast: { self: false } } })
+    await this.realtimeClient.realtime.setAuth(this.accessToken);
+    this.channel = this.realtimeClient.channel(config.topic, { config: { private: true, broadcast: { self: false } } })
       .on("broadcast", { event: "signal" }, ({ payload }) => void this.receive(payload as Signal))
       .on("broadcast", { event: "ready" }, () => void this.peerReady())
       .on("broadcast", { event: "hangup" }, () => this.close(false));
@@ -145,7 +152,7 @@ export class WebRtcCall {
     if (this.maxDuration) clearTimeout(this.maxDuration);
     this.pc?.close();
     this.pc = null;
-    if (this.channel) await supabase.removeChannel(this.channel);
+    if (this.channel) await this.realtimeClient.removeChannel(this.channel);
     this.channel = null;
     this.local.getTracks().forEach(track => track.stop());
     this.onState("ended");
