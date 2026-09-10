@@ -12,6 +12,7 @@ export default function MediaCall({ accessToken, visitId, role, localStream, onE
   const [muted, setMuted] = useState(false);
   const [camera, setCamera] = useState(true);
   const [needsPlay, setNeedsPlay] = useState(false);
+  const [failureDetail, setFailureDetail] = useState("");
 
   useEffect(() => {
     let disposed = false;
@@ -20,10 +21,11 @@ export default function MediaCall({ accessToken, visitId, role, localStream, onE
       if (remoteElement.current.srcObject === stream) return;
       remoteElement.current.srcObject = stream;
       void remoteElement.current.play().then(() => setNeedsPlay(false)).catch(() => setNeedsPlay(true));
-    }, (next, turnDegraded) => {
+    }, (next, turnDegraded, detail) => {
       if (disposed) return;
       setState(next);
       if (turnDegraded !== undefined) setDegraded(turnDegraded);
+      if (detail) setFailureDetail(detail);
     });
     call.current = instance;
     void instance.connect().catch(e => { console.error("Call setup failed", e); if (!disposed) setState("failed"); });
@@ -38,7 +40,7 @@ export default function MediaCall({ accessToken, visitId, role, localStream, onE
     <video ref={remoteElement} className={`call-video ${role === "visitor" ? "audio-only" : ""}`} autoPlay playsInline aria-label={role === "resident" ? "Visitor video" : "Resident audio"} />
     <p className="call-status" role="status">{label}</p>
     {degraded && <Feedback tone="warn">TURN is unavailable. Trying a direct connection; entry controls still work.</Feedback>}
-    {state === "failed" && <Feedback tone="warn">Continue without media. You can still use the entry controls.</Feedback>}
+    {state === "failed" && <Feedback tone="warn">{failureDetail || "Continue without media. You can still use the entry controls."}</Feedback>}
     {needsPlay && <Button variant="primary" onClick={() => void remoteElement.current?.play().then(() => setNeedsPlay(false))}>Tap to hear</Button>}
     <div className="call-controls">
       <Button aria-pressed={muted} onClick={() => { const next = !muted; setMuted(next); call.current?.setMuted(next); }}>{muted ? "Unmute microphone" : "Mute microphone"}</Button>

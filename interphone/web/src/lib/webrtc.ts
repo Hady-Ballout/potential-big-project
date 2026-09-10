@@ -36,6 +36,8 @@ export class WebRtcCall {
   private closed = false;
   private timeout?: number;
   private maxDuration?: number;
+  private readyTimer?: number;
+  private offerTimer?: number;
 
   constructor(
     private accessToken: string,
@@ -43,7 +45,7 @@ export class WebRtcCall {
     private role: "visitor" | "resident",
     private local: MediaStream,
     private onRemote: (stream: MediaStream) => void,
-    private onState: (state: CallState, degraded?: boolean) => void,
+    private onState: (state: CallState, degraded?: boolean, detail?: string) => void,
   ) {
     // A call owns its Realtime auth so visitor and resident tabs cannot overwrite each other's JWT.
     this.realtimeClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -58,19 +60,14 @@ export class WebRtcCall {
     this.pc = new RTCPeerConnection({ iceServers: config.ice_servers });
     this.local.getTracks().forEach(track => this.pc!.addTrack(track, this.local));
     this.pc.ontrack = event => this.onRemote(event.streams[0] ?? new MediaStream([event.track]));
-    this.pc.onicecandidate = event => void this.send({ candidate: event.candidate?.toJSON() ?? null });
-    this.pc.onnegotiationneeded = async () => {
-      if (this.role !== "visitor" || !this.remoteReady) return;
-      try {
-        this.makingOffer = true;
-        await this.pc!.setLocalDescription();
-        await this.waitForIceGathering();
-        await this.send({ description: this.pc!.localDescription! });
-      } finally { this.makingOffer = false; }
+    this.pc.onicecandidate = event => void this.send({ candidate: event.candidate?.toJSON() ?? null })
+      .catch(e => console.error("ICE candidate signal failed", e));
+    this.pc.onnegotiationneeded = () => {
+      if (this.role === "visitor" && this.remoteReady) void this.makeOrResendOffer();
     };
     this.pc.onconnectionstatechange = () => this.connectionChanged();
     await this.realtimeClient.realtime.setAuth(this.accessToken);
-    this.channel = this.realtimeClient.channel(config.topic, { config: { private: true, broadcast: { self: false } } })
+    this.channel = this.realtimeClient.channel(config.topic, { config: { private: true, broadcast: { self: false, ack: true } } })
       .on("broadcast", { event: "signal" }, ({ payload }) => void this.receive(payload as Signal))
       .on("broadcast", { event: "ready" }, () => void this.peerReady())
       .on("broadcast", { event: "hangup" }, () => this.close(false));
@@ -81,26 +78,35 @@ export class WebRtcCall {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { clearTimeout(timer); reject(new Error("Signaling channel failed")); }
       });
     });
-    await this.channel.send({ type: "broadcast", event: "ready", payload: { role: this.role } });
+    await this.sendReady();
+    this.readyTimer = window.setInterval(() => {
+      if (!this.pc?.remoteDescription) void this.sendReady().catch(e => console.error("Call ready signal failed", e));
+    }, 1_500);
     this.timeout = window.setTimeout(() => {
-      if (this.pc?.connectionState !== "connected") this.onState("failed", config.degraded);
+      if (this.pc?.connectionState !== "connected") void this.reportTimeout(config.degraded);
     }, 20_000);
     this.maxDuration = window.setTimeout(() => this.close(true), 5 * 60_000);
   }
 
   private async peerReady() {
     if (!this.channel || !this.pc) return;
-    if (this.role === "resident") {
-      await this.channel.send({ type: "broadcast", event: "ready", payload: { role: this.role } });
-      return;
-    }
-    if (this.remoteReady) return;
+    if (this.role === "resident") return;
     this.remoteReady = true;
+    await this.makeOrResendOffer();
+  }
+
+  private async makeOrResendOffer() {
+    if (!this.pc || this.makingOffer || this.pc.remoteDescription) return;
     try {
       this.makingOffer = true;
-      await this.pc.setLocalDescription(await this.pc.createOffer());
-      await this.waitForIceGathering();
+      if (!this.pc.localDescription || this.pc.localDescription.type !== "offer") {
+        await this.pc.setLocalDescription(await this.pc.createOffer());
+        await this.waitForIceGathering();
+      }
       await this.send({ description: this.pc.localDescription! });
+      if (!this.offerTimer) this.offerTimer = window.setInterval(() => {
+        if (!this.pc?.remoteDescription) void this.makeOrResendOffer().catch(e => console.error("Call offer retry failed", e));
+      }, 2_500);
     } finally { this.makingOffer = false; }
   }
 
@@ -113,10 +119,10 @@ export class WebRtcCall {
         this.ignoreOffer = this.role === "visitor" && offerCollision;
         if (this.ignoreOffer) return;
         await pc.setRemoteDescription(signal.description);
+        this.stopHandshakeTimers();
         for (const candidate of this.pendingCandidates.splice(0)) await pc.addIceCandidate(candidate);
         if (signal.description.type === "offer") {
           await pc.setLocalDescription(await pc.createAnswer());
-          await this.waitForIceGathering();
           await this.send({ description: pc.localDescription! });
         }
       } else if (signal.candidate) {
@@ -128,7 +134,14 @@ export class WebRtcCall {
 
   private async send(payload: Signal) {
     if (!this.channel) return;
-    await this.channel.send({ type: "broadcast", event: "signal", payload });
+    const result = await this.channel.send({ type: "broadcast", event: "signal", payload });
+    if (result !== "ok") throw new Error(`Signaling send ${result}`);
+  }
+
+  private async sendReady() {
+    if (!this.channel) return;
+    const result = await this.channel.send({ type: "broadcast", event: "ready", payload: { role: this.role } });
+    if (result !== "ok") throw new Error(`Ready signal ${result}`);
   }
 
   // Broadcast signaling is not a durable queue. Include gathered candidates in
@@ -147,9 +160,31 @@ export class WebRtcCall {
       const changed = () => {
         if (pc.iceGatheringState === "complete") finish();
       };
-      timer = window.setTimeout(finish, 8_000);
+      timer = window.setTimeout(finish, 2_500);
       pc.addEventListener("icegatheringstatechange", changed);
     });
+  }
+
+  private stopHandshakeTimers() {
+    if (this.readyTimer) window.clearInterval(this.readyTimer);
+    if (this.offerTimer) window.clearInterval(this.offerTimer);
+    this.readyTimer = undefined;
+    this.offerTimer = undefined;
+  }
+
+  private async reportTimeout(degraded: boolean) {
+    const pc = this.pc;
+    if (!pc) return;
+    const types = new Set<string>();
+    try {
+      const stats = await pc.getStats();
+      stats.forEach(report => {
+        if (report.type === "local-candidate" && report.candidateType) types.add(String(report.candidateType));
+      });
+    } catch { /* Some older browsers do not expose candidate statistics. */ }
+    const candidates = types.size ? Array.from(types).sort().join(", ") : "none";
+    const stage = pc.remoteDescription ? "media route" : this.role === "visitor" ? "answer signal" : "offer signal";
+    this.onState("failed", degraded, `Could not establish the ${stage}. ICE state: ${pc.iceConnectionState}; candidates: ${candidates}.`);
   }
 
   private connectionChanged() {
@@ -174,6 +209,7 @@ export class WebRtcCall {
     if (notify && this.channel) await this.channel.send({ type: "broadcast", event: "hangup", payload: {} }).catch(() => undefined);
     if (this.timeout) clearTimeout(this.timeout);
     if (this.maxDuration) clearTimeout(this.maxDuration);
+    this.stopHandshakeTimers();
     this.pc?.close();
     this.pc = null;
     if (this.channel) await this.realtimeClient.removeChannel(this.channel);
