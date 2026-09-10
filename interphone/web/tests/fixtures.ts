@@ -20,7 +20,7 @@ export async function mockBuilding(page: Page, values: Partial<Scenario> = {}) {
     const req = route.request();
     const url = new URL(req.url());
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" } });
-    if (url.pathname.includes("/auth/v1/token")) {
+    if (url.pathname.includes("/auth/v1/token") || url.pathname.includes("/auth/v1/signup")) {
       const payload = Buffer.from(JSON.stringify({ sub: user.id, aud: "authenticated", role: "authenticated", exp: Math.floor(Date.now() / 1000) + 3600 })).toString("base64url");
       return fulfill(route, { access_token: `eyJhbGciOiJIUzI1NiJ9.${payload}.test`, token_type: "bearer", refresh_token: "test-refresh", expires_in: 3600, user });
     }
@@ -45,9 +45,9 @@ export async function mockBuilding(page: Page, values: Partial<Scenario> = {}) {
       if (scenario.actionDelay) await new Promise(r => setTimeout(r, scenario.actionDelay));
       if (scenario.failAction) return fulfill(route, { error: "internal action error" }, scenario.failAction);
       const body = req.postDataJSON();
-      scenario.visitStatus = body.action === "deny" ? "denied" : "unlocked";
+      scenario.visitStatus = body.action === "answer" ? "answered" : body.action === "deny" ? "denied" : "unlocked";
       scenario.visitorStatus = scenario.visitStatus;
-      scenario.active = false;
+      scenario.active = body.action === "answer";
       return fulfill(route, { ok: true, status: scenario.visitStatus, command_id: "test-command", door_online: !scenario.actionOffline });
     }
     if (url.pathname.endsWith("/apartment_members")) {
@@ -61,7 +61,7 @@ export async function mockBuilding(page: Page, values: Partial<Scenario> = {}) {
     if (url.pathname.endsWith("/visits")) {
       scenario.visitQueries.push(url.search);
       if (scenario.failRefresh) return fulfill(route, { message: "internal refresh error" }, 503);
-      return fulfill(route, scenario.missingVisit || (!url.searchParams.has("id") && !scenario.active) ? null : { id: visitId, status: scenario.visitStatus, visitor_note: scenario.note, created_at: scenario.createdAt });
+      return fulfill(route, scenario.missingVisit || (!url.searchParams.has("id") && !scenario.active) ? null : { id: visitId, status: scenario.visitStatus, visitor_note: scenario.note, created_at: scenario.createdAt, answered_by: scenario.visitStatus === "answered" ? user.id : null });
     }
     if (url.pathname.endsWith("/push_subscriptions")) return fulfill(route, null);
     return fulfill(route, { error: "Unmocked test endpoint" }, 500);

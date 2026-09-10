@@ -13,3 +13,12 @@ export const VAPID_PUBLIC_KEY: string | undefined =
   (import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined) || undefined;
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/** Establishes an invisible, durable identity used to authorize a visitor's private call. */
+export async function visitorSession() {
+  const { data: current } = await supabase.auth.getSession();
+  if (current.session) return current.session;
+  const { data, error } = await supabase.auth.signInAnonymously();
+  if (error || !data.session) throw error ?? new Error("Could not start a visitor session");
+  return data.session;
+}

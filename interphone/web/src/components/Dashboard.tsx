@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
@@ -8,22 +8,47 @@ import { useApartment, useEntrance } from "../lib/useResidentData";
 import { copy } from "../lib/copy";
 import NotificationSettings from "./NotificationSettings";
 import { Button, ConnectionStatus, Feedback, Icon, Loading, Page, StatePanel } from "./ui";
+import MediaCall from "./MediaCall";
+import { prepareResidentAudio } from "../lib/webrtc";
 
 type Flash = { tone: "success" | "error" | "warn"; title?: string; text: string };
 export default function Dashboard({ session, visitId }: { session: Session; visitId?: string }) {
   const { apartment, error, retry } = useApartment(session.user.id);
   const { snapshot, failures, now, refresh } = useEntrance(apartment, visitId);
-  const [busy, setBusy] = useState<"unlock" | "deny" | null>(null);
+  const [busy, setBusy] = useState<"answer" | "unlock" | "deny" | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [completed, setCompleted] = useState<{ id: string; status: "unlocked" | "denied" } | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const lock = useRef(false);
+  const [callStream, setCallStream] = useState<MediaStream | null>(null);
   const stale = !!snapshot && (failures > 0 || now - snapshot.fetchedAt > 12_000);
   const online = snapshot && !stale ? isDeviceOnline(snapshot.lastSeen, now) : null;
   const rawVisit = snapshot?.visit;
   const status = rawVisit ? rawVisit.id === completed?.id ? completed.status : effectiveStatus(rawVisit, stale ? snapshot!.fetchedAt : now) : null;
   const activeVisit = rawVisit && status && isActive(status) ? rawVisit : null;
   const c = copy.resident;
+  useEffect(() => () => { callStream?.getTracks().forEach(track => track.stop()); }, [callStream]);
+
+  async function answer(id: string) {
+    if (lock.current || stale) return;
+    lock.current = true; setBusy("answer"); setFlash(null);
+    let stream: MediaStream | null = null;
+    try { stream = await prepareResidentAudio(); }
+    catch (e) {
+      console.error("Resident microphone permission failed", e);
+      setFlash({ tone: "warn", text: "Microphone unavailable. You can still decline or unlock without voice." });
+    }
+    try {
+      await respond(session.access_token, { action: "answer", visit_id: id });
+      if (stream) setCallStream(stream);
+      refresh();
+    } catch (e) {
+      stream?.getTracks().forEach(track => track.stop());
+      const err = e as ApiError;
+      setFlash({ tone: "error", text: err.status === 409 ? "Another resident already answered this call." : c.actionFailed });
+      refresh();
+    } finally { lock.current = false; setBusy(null); }
+  }
 
   async function act(action: "unlock" | "deny", id?: string) {
     if (!apartment || lock.current || stale || !snapshot || (action === "unlock" && online !== true)) return;
@@ -73,6 +98,10 @@ export default function Dashboard({ session, visitId }: { session: Session; visi
           <div className="incoming-heading"><div className="state-symbol"><Icon name="bell" /></div><span className="subtle">{ageLabel(activeVisit.created_at, now)}</span></div>
           <div className="panel-header"><h2 id="incoming-title">{c.incoming}</h2><p className="subtle">{c.incomingDetail}</p></div>
           <div className="visitor-message">{activeVisit.visitor_note ? <q>{activeVisit.visitor_note}</q> : <p className="subtle">{c.noMessage}</p>}</div>
+          {status === "ringing" && <Button className="full-width" variant="primary" disabled={!!busy || stale} onClick={() => void answer(activeVisit.id)}>{busy === "answer" ? "Answering…" : "Answer with voice"}</Button>}
+          {status === "answered" && activeVisit.answered_by === session.user.id && callStream && <MediaCall accessToken={session.access_token} visitId={activeVisit.id} role="resident" localStream={callStream} onEnded={() => setCallStream(null)} />}
+          {status === "answered" && activeVisit.answered_by === session.user.id && !callStream && <Feedback tone="warn">Call media is not active. Entry controls remain available.</Feedback>}
+          {status === "answered" && activeVisit.answered_by !== session.user.id && <Feedback>This call was answered by another resident.</Feedback>}
           <div className="actions">{unlock(activeVisit.id)}<Button variant="quiet" disabled={!!busy || stale} onClick={() => void act("deny", activeVisit.id)}>{busy === "deny" ? c.declining : c.decline}</Button></div>
         </section>
         : visitId ? <StatePanel title={rawVisit ? c.ended : c.unavailable} detail={rawVisit && status ? statusLabel(status, "resident").detail : c.unavailableDetail} icon={status === "unlocked" ? "check" : "clock"}>

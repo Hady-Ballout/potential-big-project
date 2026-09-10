@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 import type { VisitStatus } from "./visit";
 
 export interface Apartment { id: string; label: string; building_id: string; building: { slug: string; name: string } }
-export interface Visit { id: string; status: VisitStatus; visitor_note: string | null; created_at: string }
+export interface Visit { id: string; status: VisitStatus; visitor_note: string | null; created_at: string; answered_by: string | null }
 export interface Snapshot { visit: Visit | null; lastSeen: string | null; fetchedAt: number }
 
 export function useApartment(userId: string) {
@@ -55,7 +55,7 @@ export function useEntrance(apartment: Apartment | null | undefined, visitId?: s
       ac = new AbortController();
       const timeout = window.setTimeout(() => ac?.abort(), 12_000);
       try {
-        let query = supabase.from("visits").select("id, status, visitor_note, created_at").eq("apartment_id", apartment.id);
+        let query = supabase.from("visits").select("id, status, visitor_note, created_at, answered_by").eq("apartment_id", apartment.id);
         query = visitId ? query.eq("id", visitId) : query.in("status", ["ringing", "answered"]).order("created_at", { ascending: false }).limit(1);
         const [dev, vis] = await Promise.all([
           supabase.from("devices").select("last_seen_at").eq("building_id", apartment.building_id)

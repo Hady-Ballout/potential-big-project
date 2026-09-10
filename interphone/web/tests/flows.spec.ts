@@ -43,6 +43,21 @@ test("visitor failures preserve selection and hide backend messages", async ({ p
   await expect(page.getByText("internal technical ring error")).toHaveCount(0);
 });
 
+test("visitor can ring without media when permission is denied", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+    getUserMedia: () => Promise.reject(new DOMException("Denied", "NotAllowedError")),
+    enumerateDevices: () => Promise.resolve([]),
+  } }));
+  const state = await mockBuilding(page);
+  await page.goto("/d/cedar-house");
+  await page.getByRole("radio", { name: "Apartment 1A" }).check();
+  await page.getByRole("button", { name: "Set up camera and microphone" }).click();
+  await expect(page.getByText(/still ring without media/)).toBeVisible();
+  await page.getByRole("button", { name: "Ring apartment 1A" }).click();
+  await expect(page.getByRole("heading", { name: "Waiting for a response" })).toBeVisible();
+  expect(state.rings).toBe(1);
+});
+
 test("visitor waiting recovers after polling failures", async ({ page }) => {
   const state = await mockBuilding(page);
   await page.goto("/d/cedar-house");

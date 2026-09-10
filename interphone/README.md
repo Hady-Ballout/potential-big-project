@@ -24,7 +24,7 @@ visitor phone ──HTTPS──▶ Supabase (Postgres + edge functions + realtim
 | Virtual door controller (no hardware) | `tools/virtual-device` | done |
 | Visitor page + resident app + push (minimal) | `web/` | done, see `web/README.md` |
 | Door sticker QR generator | `tools/make-qr` | done |
-| WebRTC video/audio | `web/src/lib/webrtc.ts` | Phase 4 |
+| WebRTC video/audio + private signaling | `web/src/lib/webrtc.ts`, `supabase/functions/call-config` | done; needs TURN credentials and two-device field test |
 
 ## Quick start
 
@@ -94,7 +94,7 @@ Details, phone testing and push setup: `web/README.md`.
 ```
 supabase link --project-ref <ref>
 supabase db push
-supabase functions deploy ring respond device-poll
+supabase functions deploy ring respond device-poll call-config
 supabase secrets set --env-file supabase/.env
 ```
 

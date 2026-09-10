@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import { ApiError, getBuilding, getVisitStatus, ring, type BuildingInfo } from "../lib/api";
+import { ApiError, cancelVisit, getBuilding, getVisitStatus, ring, type BuildingInfo } from "../lib/api";
 import { isTerminal, statusLabel, type VisitStatus } from "../lib/visit";
 import { copy } from "../lib/copy";
 import { Button, ConnectionStatus, Feedback, Field, Icon, Loading, Page, StatePanel } from "../components/ui";
+import MediaCall from "../components/MediaCall";
+import { mediaDevices, prepareVisitorMedia } from "../lib/webrtc";
+import { visitorSession } from "../lib/supabase";
 
 const POLL_MS = 1500;
 type Context = { info: BuildingInfo; apartmentId: string; note: string; label: string };
@@ -22,6 +25,14 @@ export default function VisitorPage() {
   const sending = useRef(false);
   const loadController = useRef<AbortController | null>(null);
   const generation = useRef(0);
+  const preview = useRef<HTMLVideoElement>(null);
+  const [accessToken, setAccessToken] = useState("");
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [mediaError, setMediaError] = useState("");
+  const [preparing, setPreparing] = useState(false);
+  const [devices, setDevices] = useState<{ cameras: MediaDeviceInfo[]; microphones: MediaDeviceInfo[] }>({ cameras: [], microphones: [] });
+  const [cameraId, setCameraId] = useState("");
+  const [microphoneId, setMicrophoneId] = useState("");
 
   const load = useCallback(async (apartmentId?: string, note = "") => {
     const current = ++generation.current;
@@ -84,7 +95,8 @@ export default function VisitorPage() {
       inFlight = true;
       controller = new AbortController();
       try {
-        const v = await getVisitStatus(visitId, controller.signal);
+        if (!accessToken) return;
+        const v = await getVisitStatus(accessToken, visitId, controller.signal);
         if (stopped) return;
         setPhase(p => {
           if (p.kind !== "ringing" || p.visitId !== visitId) return p;
@@ -107,7 +119,30 @@ export default function VisitorPage() {
     document.addEventListener("visibilitychange", visible);
     void tick();
     return () => { stopped = true; controller?.abort(); clearInterval(id); clearInterval(clock); document.removeEventListener("visibilitychange", visible); };
-  }, [visitId]);
+  }, [visitId, accessToken]);
+
+  useEffect(() => {
+    if (preview.current) preview.current.srcObject = localStream;
+  }, [localStream, phase.kind]);
+  useEffect(() => () => { localStream?.getTracks().forEach(track => track.stop()); }, [localStream]);
+
+  async function prepareMedia(nextCamera = cameraId, nextMicrophone = microphoneId) {
+    if (preparing) return;
+    setPreparing(true); setMediaError("");
+    try {
+      localStream?.getTracks().forEach(track => track.stop());
+      const stream = await prepareVisitorMedia(nextCamera || undefined, nextMicrophone || undefined);
+      setLocalStream(stream);
+      const found = await mediaDevices();
+      setDevices(found);
+      setCameraId(stream.getVideoTracks()[0]?.getSettings().deviceId ?? nextCamera);
+      setMicrophoneId(stream.getAudioTracks()[0]?.getSettings().deviceId ?? nextMicrophone);
+    } catch (e) {
+      console.error("Visitor media permission failed", e);
+      setLocalStream(null);
+      setMediaError("Camera or microphone is unavailable. You can still ring without media.");
+    } finally { setPreparing(false); }
+  }
 
   async function doRing() {
     if (phase.kind !== "pick" || !phase.apartmentId || sending.current) return;
@@ -116,7 +151,9 @@ export default function VisitorPage() {
     const { info, apartmentId, note } = phase;
     setPhase({ ...phase, sending: true, error: undefined });
     try {
-      const r = await ring({ building: info.building.slug, apartment_id: apartmentId, note: note.trim() || undefined });
+      const session = await visitorSession();
+      setAccessToken(session.access_token);
+      const r = await ring(session.access_token, { building: info.building.slug, apartment_id: apartmentId, note: note.trim() || undefined });
       if (current !== generation.current) return;
       const context = { info, apartmentId, note, label: info.apartments.find(a => a.id === apartmentId)?.label ?? "" };
       if (isTerminal(r.status)) setPhase({ ...context, kind: "done", status: r.status });
@@ -127,8 +164,20 @@ export default function VisitorPage() {
       console.error("Ring failed", e);
       const err = e as ApiError;
       if (err.status === 404) { void load(); return; }
-      setPhase({ ...phase, sending: false, error: err.status === 429 ? copy.visitor.limited : err.status === 0 ? copy.network : copy.visitor.ringFailed });
+      setPhase({ ...phase, sending: false, error: err.status === 429 ? copy.visitor.limited : err.status === 409 ? "That apartment is already receiving another call. Please try again shortly." : err.status === 0 ? copy.network : copy.visitor.ringFailed });
     } finally { sending.current = false; }
+  }
+
+  async function cancel() {
+    if (phase.kind !== "ringing" || !accessToken) return;
+    const current = phase;
+    try {
+      await cancelVisit(accessToken, phase.visitId);
+      setPhase({ ...current, kind: "done", status: "cancelled" });
+    } catch (e) {
+      console.error("Cancel failed", e);
+      setPhase(p => p.kind === "ringing" ? { ...p, failures: p.failures + 1 } : p);
+    }
   }
 
   const info = "info" in phase ? phase.info : null;
@@ -157,6 +206,18 @@ export default function VisitorPage() {
             <textarea id="visitor-note" placeholder={copy.visitor.placeholder} maxLength={140} value={phase.note} onChange={e => setPhase({ ...phase, note: e.target.value })} disabled={phase.sending} aria-describedby="note-count" />
             <span className="character-count" id="note-count">{copy.visitor.count(phase.note.length)}</span>
           </Field>
+          <section className="media-setup" aria-labelledby="media-setup-title">
+            <div><strong id="media-setup-title">Camera and microphone</strong><p className="subtle">Preview your camera before ringing. The resident will see you only after answering.</p></div>
+            {localStream ? <>
+              <video ref={preview} className="media-preview" autoPlay muted playsInline aria-label="Your camera preview" />
+              <div className="device-selects">
+                {devices.cameras.length > 1 && <Field id="visitor-camera" label="Camera"><select id="visitor-camera" value={cameraId} onChange={e => { setCameraId(e.target.value); void prepareMedia(e.target.value, microphoneId); }}>{devices.cameras.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${i + 1}`}</option>)}</select></Field>}
+                {devices.microphones.length > 1 && <Field id="visitor-microphone" label="Microphone"><select id="visitor-microphone" value={microphoneId} onChange={e => { setMicrophoneId(e.target.value); void prepareMedia(cameraId, e.target.value); }}>{devices.microphones.map((d, i) => <option key={d.deviceId} value={d.deviceId}>{d.label || `Microphone ${i + 1}`}</option>)}</select></Field>}
+              </div>
+              <Button variant="quiet" onClick={() => { localStream.getTracks().forEach(track => track.stop()); setLocalStream(null); }}>Continue without media</Button>
+            </> : <Button onClick={() => void prepareMedia()} disabled={preparing}>{preparing ? "Opening camera…" : "Set up camera and microphone"}</Button>}
+            {mediaError && <Feedback tone="warn">{mediaError}</Feedback>}
+          </section>
           {phase.error && <Feedback tone="error">{phase.error}</Feedback>}
           <Button type="submit" variant="primary" disabled={!phase.apartmentId || phase.sending}><Icon name="bell" />{phase.sending ? copy.visitor.sending : selectedLabel ? copy.visitor.ringApartment(selectedLabel) : copy.visitor.ring}</Button>
         </form>}
@@ -164,8 +225,11 @@ export default function VisitorPage() {
     </>}
     {phase.kind === "ringing" && <StatePanel focus icon="bell" title={phase.status === "answered" ? copy.visitor.answered : copy.visitor.waiting} detail={phase.status === "answered" ? copy.visitor.answeredDetail : copy.visitor.waitingDetail}>
       <span className="elapsed">{copy.visitor.elapsed(Math.max(0, Math.floor((now - Date.parse(phase.createdAt)) / 1000)))}</span>
+      {phase.status === "answered" && localStream && accessToken && <MediaCall accessToken={accessToken} visitId={phase.visitId} role="visitor" localStream={localStream} />}
+      {phase.status === "answered" && !localStream && <Feedback>Continuing without camera or voice.</Feedback>}
       {phase.reused && <Feedback>{copy.visitor.reused}</Feedback>}
       {phase.failures > 0 && <Feedback tone="warn">{phase.failures >= 2 ? copy.reconnecting : copy.stale}</Feedback>}
+      <Button variant="quiet" onClick={() => void cancel()}>Cancel request</Button>
     </StatePanel>}
     {phase.kind === "done" && <StatePanel focus icon={phase.status === "unlocked" ? "check" : phase.status === "expired" ? "clock" : "info"} title={statusLabel(phase.status, "visitor").title} detail={statusLabel(phase.status, "visitor").detail}>
       <div className="stack">{phase.status !== "unlocked" && <Button variant="primary" onClick={() => void load(phase.apartmentId, phase.note)}>{copy.retry}</Button>}

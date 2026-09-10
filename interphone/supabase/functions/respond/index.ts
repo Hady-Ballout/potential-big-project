@@ -40,7 +40,18 @@ Deno.serve(async (req) => {
   if (action === "answer") {
     if (!visit) return error("visit_id required for answer");
     if (visit.status !== "ringing") return error(`visit is ${visit.status}`, 409);
-    await admin.from("visits").update({ status: "answered", answered_by: me.user.id, answered_at: now }).eq("id", visit.id);
+    const { data: claimed, error: claimError } = await admin.from("visits")
+      .update({ status: "answered", answered_by: me.user.id, answered_at: now })
+      .eq("id", visit.id).eq("status", "ringing").select("id").maybeSingle();
+    if (claimError) return error("could not answer visit", 500);
+    if (!claimed) return error("visit was answered by another resident", 409);
+    const { error: grantError } = await admin.from("call_participants")
+      .insert({ visit_id: visit.id, participant_id: me.user.id, role: "resident" });
+    if (grantError) {
+      await admin.from("visits").update({ status: "ringing", answered_by: null, answered_at: null })
+        .eq("id", visit.id).eq("answered_by", me.user.id);
+      return error("could not authorize call", 500);
+    }
     return json({ ok: true, status: "answered" });
   }
 

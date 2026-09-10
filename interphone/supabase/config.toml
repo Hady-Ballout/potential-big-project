@@ -23,12 +23,13 @@ port = 54323
 
 [auth]
 enabled = true
-site_url = "http://localhost:5173"
-additional_redirect_urls = ["http://localhost:5173/app"]
+site_url = "https://interphone-4bok.onrender.com"
+additional_redirect_urls = ["https://interphone-4bok.onrender.com/app", "http://localhost:5173/app"]
 enable_signup = true
+enable_anonymous_sign_ins = true
 [auth.email]
 enable_signup = true
-enable_confirmations = false
+enable_confirmations = true
 
 [realtime]
 enabled = true
@@ -38,4 +39,6 @@ verify_jwt = false
 [functions.device-poll]
 verify_jwt = false
 [functions.respond]
+verify_jwt = true
+[functions.call-config]
 verify_jwt = true

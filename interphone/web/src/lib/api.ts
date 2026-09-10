@@ -24,6 +24,7 @@ export interface RingResult {
 export interface VisitStatusResult { id: string; status: VisitStatus; created_at: string }
 export type RespondAction = "answer" | "unlock" | "deny";
 export interface RespondResult { ok: true; status: VisitStatus; command_id?: string; door_online?: boolean }
+export interface CallConfig { topic: string; role: "visitor" | "resident"; ice_servers: RTCIceServer[]; degraded: boolean }
 
 async function request<T>(path: string, init: RequestInit = {}, accessToken?: string): Promise<T> {
   const headers: Record<string, string> = {
@@ -63,12 +64,20 @@ export function getBuilding(slug: string, signal?: AbortSignal): Promise<Buildin
   return request<BuildingInfo>(`/ring?building=${encodeURIComponent(slug)}`, { signal });
 }
 
-export function ring(input: { building: string; apartment_id: string; note?: string }): Promise<RingResult> {
-  return request<RingResult>("/ring", { method: "POST", body: JSON.stringify(input) });
+export function ring(accessToken: string, input: { building: string; apartment_id: string; note?: string }): Promise<RingResult> {
+  return request<RingResult>("/ring", { method: "POST", body: JSON.stringify(input) }, accessToken);
 }
 
-export function getVisitStatus(visitId: string, signal?: AbortSignal): Promise<VisitStatusResult> {
-  return request<VisitStatusResult>(`/ring?visit=${encodeURIComponent(visitId)}`, { signal });
+export function getVisitStatus(accessToken: string, visitId: string, signal?: AbortSignal): Promise<VisitStatusResult> {
+  return request<VisitStatusResult>(`/ring?visit=${encodeURIComponent(visitId)}`, { signal }, accessToken);
+}
+
+export function getCallConfig(accessToken: string, visitId: string): Promise<CallConfig> {
+  return request<CallConfig>("/call-config", { method: "POST", body: JSON.stringify({ visit_id: visitId }) }, accessToken);
+}
+
+export function cancelVisit(accessToken: string, visitId: string): Promise<RespondResult> {
+  return request<RespondResult>("/ring", { method: "POST", body: JSON.stringify({ action: "cancel", visit_id: visitId }) }, accessToken);
 }
 
 export function respond(
